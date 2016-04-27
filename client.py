@@ -8,6 +8,12 @@ PORT = 8018
 TIMEOUT = 5
 BUF_SIZE = 1024
 
+try:
+    input = raw_input
+except NameError:
+    pass
+
+from util import string_t, safe_send
 
 class WhatsUpClient():
 
@@ -15,20 +21,18 @@ class WhatsUpClient():
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.sock.connect((host, port))
         logging.info('Connecting to %s:%s' % (host, port))
-        while 1:
-            try:
-                buf = self.sock.recv(BUF_SIZE)
+
+        try:
+            while 1:
+                buf = string_t.recv(self.sock)
                 sys.stdout.write(buf)
-                cmd = raw_input()
+                cmd = input()
                 if cmd.strip() == '!q':
                     sys.exit(1)
-                self.sock.send(cmd)
-            except KeyboardInterrupt:
-                print('Quited')
-                self.sock.close()
-                sys.exit(0)
-            except:
-                self.sock.close()
+                string_t(cmd).send(self.sock)
+
+        finally:
+            self.sock.close()
 
     def run(self):
         pass
