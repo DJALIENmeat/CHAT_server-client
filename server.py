@@ -1,3 +1,5 @@
+#!/usr/bin/env python3
+
 import socket
 import threading
 import time
@@ -9,6 +11,8 @@ PORT = 8018
 TIMEOUT = 5
 BUF_SIZE = 1024
 
+from util import safe_send, string_t
+
 class WhatsUpServer(threading.Thread):
 
     def __init__(self, conn, addr):
@@ -19,7 +23,7 @@ class WhatsUpServer(threading.Thread):
         self.name = ''
 
     def print_indicator(self, prompt):
-        self.conn.send('{0}\n>> '.format(prompt).encode('utf-8'))
+        string_t("{0}\n>> ".format(prompt)).send(self.conn)
 
     def login(self):
         global clients
@@ -43,7 +47,7 @@ class WhatsUpServer(threading.Thread):
                 'lastlogin': time.ctime()
             }
             while 1:
-                name = self.conn.recv(BUF_SIZE).strip()
+                name = string_t.recv(self.conn).strip()
                 if name in messages:
                     self.print_indicator(
                         '## This name already exists, please try another')
@@ -55,8 +59,8 @@ class WhatsUpServer(threading.Thread):
             messages[name] = []
             self.print_indicator(
                 '## Hello %s, please enter your password:' % (self.name,))
-            password = self.conn.recv(BUF_SIZE)
-            accounts[self.ip]['pass'] = password.strip()
+            password = string_t.recv(self.conn).strip()
+            accounts[self.ip]['pass'] = password
             self.print_indicator('## Welcome, enjoy your chat')
         else:
             self.name = accounts[self.ip]['name']
@@ -64,7 +68,7 @@ class WhatsUpServer(threading.Thread):
             # print accounts
             self.print_indicator(msg)
             while 1:
-                password = self.conn.recv(BUF_SIZE).strip()
+                password = string_t.recv(self.conn).strip()
                 if password != accounts[self.ip]['pass']:
                     self.print_indicator(
                         '## Incorrect password, please enter again')
@@ -74,14 +78,14 @@ class WhatsUpServer(threading.Thread):
                         (accounts[self.ip]['lastlogin'],))
                     accounts[self.ip]['lastlogin'] = time.ctime()
                     break
-            self.conn.send(self.show_mentions(self.name))
+            string_t(self.show_mentions(self.name)).send(self.conn)
         self.broadcast('`%s` is online now' % (self.name,), clients, False)
         onlines[self.name] = self.conn
 
     def logoff(self):
         global clients
         global onlines
-        self.conn.send('## Bye!\n')
+        string_t('## Bye!\n').send(self.conn)
         del onlines[self.name]
         clients.remove((self.conn, self.addr))
         if onlines:
@@ -127,7 +131,7 @@ class WhatsUpServer(threading.Thread):
 
             # if user is online
             if to_user in onlines:
-                onlines[to_user].send('@%s: %s\n>> ' % (from_user, msg))
+                string_t('@%s: %s\n>> ' % (from_user, msg)).send(onlines[to_user])
                 self.mention(from_user, to_user, msg, 1)
             # offline
             else:
@@ -159,12 +163,13 @@ class WhatsUpServer(threading.Thread):
             groups[group_name].remove((self.conn, self.addr))
             self.print_indicator('## You have left the group `%s`' %
                                  (group_name,))
-                                 
-        except KeyboardInterrupt:
-            print('Quited')
-            sys.exit(0)
-        except Exception as e:
+        except:
             pass
+        #except KeyboardInterrupt:
+        #    print('Quited')
+        #    sys.exit(0)
+        #except Exception as e:
+        #    pass
 
     def mention(self, from_user, to_user, msg, read=0):
         global messages
@@ -194,10 +199,10 @@ class WhatsUpServer(threading.Thread):
         for conn, addr in receivers:
             # if the client is not the current user
             if addr[0] != self.ip:
-                conn.send(msg + '\n>> ')
+                string_t(msg + '\n>> ').send(conn)
             # if current user
-            else:
-                self.conn.send('>> ') if to_self else self.conn.send('')
+            elif to_self:
+                string_t('>> ').send()
 
     def run(self):
         global messages
@@ -205,22 +210,22 @@ class WhatsUpServer(threading.Thread):
         global clients
         self.login()
 
-        while 1:
-            try:
+        try:
+            while 1:
                 self.conn.settimeout(TIMEOUT)
-                buf = self.conn.recv(BUF_SIZE).strip()
+                buf = string_t.recv(self.conn).strip()
                 logging.info('%s@%s: %s' % (self.name, self.addr[0], buf))
                 # check features
                 if not self.check_keyword(buf):
                     # client broadcasts message to all
                     self.broadcast('%s: %s' % (self.name, buf), clients)
 
-            except KeyboardInterrupt:
-                print('Quited')
-                sys.exit(0)
-            except Exception as e:
-                # timed out
-                pass
+        except KeyboardInterrupt:
+            print('Quited')
+            sys.exit(0)
+        except Exception as e:
+            # timed out
+            pass
 
 def main():
     global clients
@@ -251,19 +256,9 @@ def main():
     print (PORT)
 
     while 1:
-        try:
-            conn, addr = sock.accept()
-            server = WhatsUpServer(conn, addr)
-            server.start()
-        except KeyboardInterrupt:
-            print('Quited')
-            sys.exit(0)
-        except Exception as e:
-            print ('e')
+        conn, addr = sock.accept()
+        server = WhatsUpServer(conn, addr)
+        server.start()
 
 if __name__ == '__main__':
-    try:
-        main()
-    except KeyboardInterrupt:
-        print('Quited')
-        sys.exit(0)
+    main()
