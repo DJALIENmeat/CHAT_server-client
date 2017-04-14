@@ -1,12 +1,6 @@
-README
+This is a simple IRC Server and Client written in Python3
 
-Please use signoff method in Service Log
+The Server runs but is not complete problems that need fixing
+are listed in "Service Log.txt"
 
-	Example;
-		
-		SIGNOFF
-			Date: 7/03/2017 (Current Date)
-			Time: 19:50	(Current Time)
-			Programmer: DG	(Programmer Initial)
-			
-THANK YOU
+any help with this much appreciated thank you 
