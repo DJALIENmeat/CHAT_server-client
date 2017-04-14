@@ -5,65 +5,86 @@ import threading
 import time
 import logging
 import sys
-
-HOST = ''
-PORT = 8018
-TIMEOUT = 5
-BUF_SIZE = 1024
-
 from util import safe_send, string_t
 
-class WhatsUpServer(threading.Thread):
+HOST = ''
+PORT = 8031
+TIMEOUT = 20
+BUF_SIZE = 1024
 
-    def __init__(self, conn, addr):
+class WhatsUpAccount():
+    def __init__(self, conn, name, password):
+        self.name = name
+        self.password = password
+        self.last_login = None
+        self.mentions = []
+        self.connection = conn
+
+    def mention(self, src_account, msg):
+        self.mentions.append((
+            src_account, msg, False
+        ))
+
+    def iter_mentions(self):
+        for mention in self.mentions:
+            acct, msg, has_read = mention
+            if has_read:
+                yield '      {}: {}'.format(acct.name, msg)
+            else:
+                yield '(NEW) {}: {}'.format(acct.name, msg)
+
+            mention = (acct, msg, True)
+
+    def __eq__(self, other):
+        return self.name == other.name
+
+    def __bool__(self):
+        return self.connection != None
+
+
+class WhatsUpConnection(threading.Thread):
+    def __init__(self, server, conn, addr):
         threading.Thread.__init__(self)
+        self.server = server
         self.conn = conn
         self.addr = addr
         self.ip = self.addr[0]
-        self.name = ''
+        self.account = None
+
+        logging.info('Connected from: %s:%s' %
+                     (self.addr[0], self.addr[1]))
 
     def print_indicator(self, prompt):
         string_t("{0}\n>> ".format(prompt)).send(self.conn)
 
     def login(self):
-        global clients
-        global messages
-        global accounts
-        global onlines
-
-        logging.info('Connected from: %s:%s' %
-                     (self.addr[0], self.addr[1]))
-        clients.add((self.conn, self.addr))
+        global name
         msg = '\n## Welcome to WhatsUp\n## Enter `!q` to quit\n'
 
         # new user
-        print('accounts')
-        if self.ip not in accounts:
-            msg += '## Please enter your name:'
+        if self.ip not in self.server.accounts:
+            msg += 'Please enter your name: '
             self.print_indicator(msg)
-            accounts[self.ip] = {
-                'name': '',
-                'pass': '',
-                'lastlogin': time.ctime()
-            }
             while 1:
                 name = string_t.recv(self.conn).strip()
                 if name in messages:
                     self.print_indicator(
-                        '## This name already exists, please try another')
+                        'This name already exists, please try another!')
                 else:
                     break
-            accounts[self.ip]['name'] = name
-            self.name = name
-            logging.info('%s logged as %s' % (self.addr[0], self.name))
-            messages[name] = []
+
             self.print_indicator(
-                '## Hello %s, please enter your password:' % (self.name,))
+                'Hello %s, please enter your password:' % (self.name,))
             password = string_t.recv(self.conn).strip()
-            accounts[self.ip]['pass'] = password
+
+            self.account = WhatsUpAccount(self, name, password)
+            self.account.last_login = time.ctime()
+            self.server.accounts[self.ip] = self.account
+
             self.print_indicator('## Welcome, enjoy your chat')
+            logging.info('%s logged as %s' % (self.addr[0], self.name))
         else:
-            self.name = accounts[self.ip]['name']
+            self.account = self.server.accounts[self.ip]
             msg += '## Hello %s, please enter your password:' % (self.name,)
             # print accounts
             self.print_indicator(msg)
@@ -75,30 +96,25 @@ class WhatsUpServer(threading.Thread):
                 else:
                     self.print_indicator(
                         '## Welcome back, last login: %s' %
-                        (accounts[self.ip]['lastlogin'],))
-                    accounts[self.ip]['lastlogin'] = time.ctime()
+                        (self.account.last_login,))
+                    self.account.last_login = time.ctime()
                     break
-            string_t(self.show_mentions(self.name)).send(self.conn)
-        self.broadcast('`%s` is online now' % (self.name,), clients, False)
-        onlines[self.name] = self.conn
 
-    def logoff(self):
-        global clients
-        global onlines
-        string_t('## Bye!\n').send(self.conn)
-        del onlines[self.name]
-        clients.remove((self.conn, self.addr))
-        if onlines:
-            self.broadcast('## `%s` is offline now' %
-                           (self.name,), clients)
+            mentions = "\n".join(list(self.account.iter_mentions())) + "\n"
+            string_t(mentions).send(self.conn)
+
+        self.server.broadcast('`%s` is online now' % (self.name,))
+
+    def logout(self):
+        string_t("## Bye!\n").send(self.conn)
+        self.server.broadcast("## `{}` is offline now".format(self.name))
+        self.account = None
         self.conn.close()
-        exit()
 
     def check_keyword(self, buf):
-        global onlines
 
         if buf.find('!q') == 0:
-            self.logoff()
+            self.logout()
 
         if buf.find('#') == 0:
             group_keyword = buf.split(' ')[0][1:]
@@ -130,95 +146,28 @@ class WhatsUpServer(threading.Thread):
             msg = buf.split(' ', 1)[1]
 
             # if user is online
-            if to_user in onlines:
-                string_t('@%s: %s\n>> ' % (from_user, msg)).send(onlines[to_user])
+            if to_user in self.logged_in:
+                string_t('@%s: %s\n>> ' % (from_user, msg)).send(self.logged_in[to_user])
                 self.mention(from_user, to_user, msg, 1)
             # offline
             else:
                 self.mention(from_user, to_user, msg)
             return True
 
-    def group_post(self, group_name, msg):
-        global groups
-        # if the group does not exist, create it
-        groups.setdefault(group_name, set())
-
-        # if current user is a member of the group
-        if (self.conn, self.addr) in groups[group_name]:
-            self.broadcast(msg, groups[group_name])
-        else:
-            self.print_indicator(
-                '## You are current not a member of group `%s`' % (group_name,))
-
-    def group_join(self, group_name):
-        global groups
-        groups.setdefault(group_name, set())
-        groups[group_name].add((self.conn, self.addr))
-        self.print_indicator('## You have joined the group `%s`' %
-                             (group_name,))
-
-    def group_leave(self, group_name):
-        global groups
-        try:
-            groups[group_name].remove((self.conn, self.addr))
-            self.print_indicator('## You have left the group `%s`' %
-                                 (group_name,))
-        except:
-            pass
-        #except KeyboardInterrupt:
-        #    print('Quited')
-        #    sys.exit(0)
-        #except Exception as e:
-        #    pass
-
-    def mention(self, from_user, to_user, msg, read=0):
-        global messages
-        # print 'Messages', messages
-        if to_user in messages:
-            messages[to_user].append([from_user, msg, read])
-            self.print_indicator('## Message has sent to %s' % (to_user,))
-        else:
-            self.print_indicator('## No such user named `%s`' % (to_user,))
-
-    def show_mentions(self, name):
-        global messages
-        res = '## Here are your messages:\n'
-        if not messages[name]:
-            res += '   No messages available\n>> '
-            return res
-        for msg in messages[name]:
-            if msg[2] == 0:
-                res += '(NEW) %s: %s\n' % (msg[0], msg[1])
-                msg[2] = 1
-            else:
-                res += '      %s: %s\n' % (msg[0], msg[1])
-        res += '>> '
-        return res
-
-    def broadcast(self, msg, receivers, to_self=True):
-        for conn, addr in receivers:
-            # if the client is not the current user
-            if addr[0] != self.ip:
-                string_t(msg + '\n>> ').send(conn)
-            # if current user
-            elif to_self:
-                string_t('>> ').send()
-
     def run(self):
-        global messages
-        global accounts
-        global clients
         self.login()
+        self.conn.settimeout(TIMEOUT)
 
         try:
             while 1:
-                self.conn.settimeout(TIMEOUT)
                 buf = string_t.recv(self.conn).strip()
                 logging.info('%s@%s: %s' % (self.name, self.addr[0], buf))
                 # check features
                 if not self.check_keyword(buf):
                     # client broadcasts message to all
-                    self.broadcast('%s: %s' % (self.name, buf), clients)
+                    self.broadcast('%s: %s' % (self.name, buf), self.logged_in)
+                else:
+                    string_t("").send(self.conn)
 
         except KeyboardInterrupt:
             print('Quited')
@@ -227,11 +176,96 @@ class WhatsUpServer(threading.Thread):
             # timed out
             pass
 
+    def __bool__(self):
+        return self.account != None
+
+
+class WhatsUpServer(threading.Thread):
+    def __init__(self):
+        threading.Thread.__init__(self)
+
+        self.sock = None
+        self.name = ''
+
+        self.clients = []
+        self.accounts = {}
+        self.groups = {}
+
+        self.logged_in = {}
+
+    # def logoff(self):
+    #     global clients
+    #     string_t('## Bye!\n').send(self.conn)
+    #     del self.logged_in[self.name]
+    #     clients.remove((self.conn, self.addr))
+    #     if self.logged_in:
+    #         self.broadcast('## `%s` is offline now' %
+    #                        (self.name,), self.logged_in)
+    #     self.conn.close()
+    #     exit()
+
+    def group_post(self, acct, group_name, msg):
+        # if the group does not exist, create it
+        self.groups.setdefault(group_name, set())
+
+        # if current user is a member of the group
+        if acct in groups[group_name]:
+            self.broadcast(msg, groups[group_name])
+        else:
+            acct.print_indicator(
+                '## You are current not a member of group `%s`' % (group_name,))
+
+    def group_join(self, acct, group_name):
+        self.groups.setdefault(group_name, set())
+
+        if acct not in self.groups[group_name]:
+            self.groups[group_name].add(acct)
+            self.print_indicator('## You have joined the group `%s`' %
+                                 (group_name,))
+
+    def group_leave(self, acct, group_name):
+        if acct in groups[group_name]:
+            groups[group_name].remove(acct)
+            self.print_indicator('## You have left the group `%s`' %
+                                 (group_name,))
+
+    def broadcast(self, msg, receivers=None, to_self=True):
+        if not receivers: receivers = self.accounts
+
+        for ip, acct in receivers.items():
+            # if the client is not the current user
+            # if ip != self.ip:
+            string_t(msg + '\n>> ').send(acct.connection.conn)
+            # if current user
+            # elif to_self:
+            #    string_t('{}\n>> '.format(msg)).send(self.conn)
+
+        print("end broadcast")
+
+    def run(self):
+        print('-= WhatsUp Server =-')
+        print('>> Listening on:'), PORT
+        print(PORT)
+
+        # set up socket
+        self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self.sock.bind((HOST, PORT))
+        self.sock.listen(5)
+
+        while 1:
+            print("in loop before accept")
+            sock, addr = self.sock.accept()
+            print("in loop after accept")
+            conn = WhatsUpConnection(self, sock, addr)
+            self.clients.append(conn)
+            conn.start()
+
+
 def main():
     global clients
     global messages
     global accounts
-    global onlines
     global groups
 
     # logging setup
@@ -243,22 +277,11 @@ def main():
     clients = set()
     messages = {}
     accounts = {}
-    onlines = {}
     groups = {}
 
-    # set up socket
-    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    sock.bind((HOST, PORT))
-    sock.listen(5)
-    print ('-= WhatsUp Server =-')
-    print ('>> Listening on:'), PORT
-    print (PORT)
+    server = WhatsUpServer()
+    server.start()
 
-    while 1:
-        conn, addr = sock.accept()
-        server = WhatsUpServer(conn, addr)
-        server.start()
 
 if __name__ == '__main__':
     main()

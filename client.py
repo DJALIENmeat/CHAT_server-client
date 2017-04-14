@@ -2,10 +2,11 @@ import socket
 import time
 import logging
 import sys
+from util import string_t, safe_send
 
 HOST = '127.0.0.1'
-PORT = 8018
-TIMEOUT = 5
+PORT = 8031
+TIMEOUT = 10
 BUF_SIZE = 1024
 
 try:
@@ -13,7 +14,6 @@ try:
 except NameError:
     pass
 
-from util import string_t, safe_send
 
 class WhatsUpClient():
 

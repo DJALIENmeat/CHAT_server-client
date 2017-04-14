@@ -5,8 +5,10 @@ import sys
 import struct
 import socket
 
+
 class ProtocolError(Exception):
     pass
+
 
 def safe_recv(sock, buflen):
     buf = bytearray()
@@ -27,21 +29,24 @@ def safe_recv(sock, buflen):
     if len(buf) < buflen:
         raise ProtocolError("connection closed")
 
-    print(buf)
+    #print(buf)
 
     return buf
+
 
 def safe_send(sock, buf):
     if type(buf) is str:
         buf = buf.encode("utf8")
 
-    print("send: {}".format(buf))
+    #print("send: {}".format(buf))
 
     try:
         sock.sendall(buf)
+
     except (BrokenPipeError, OSError, socket.timeout) as e:
         print(e, file=sys.stderr)
         raise ProtocolError(e)
+
 
 class nettype:
 

@@ -1,0 +1,24 @@
+Python 3.*.* IRC Chat
+
+IRC Chat Server/Client
+
+Needs Fixing;
+	*	Users connecting detected as "self set variable name" instead of "Thread-2, Thread-3 ect."
+	*	Crash/Hang after first message sent.
+	*	Refresh all messages immediately clientside.
+	
+	
+Not needed at moment but want implemented eventually;
+	*	Full daily log if server restarted though day just adds on to end of days log.
+		+ Create new log daily
+	*	Username/Password Database to only allow user from database to use service.
+	*	Home page to show #Rules to user and user must accept ToS to proceed to chat.
+	*	Dictionary definition to ban all explicate word including abbreviations
+	*	Function //REPORT! makes REPORT.txt in server main folder with logged time/date.
+	
+	
+SIGNOFF
+	Date: 7/03/2017
+	Time: 19:50
+	Programmer: DG
+	
